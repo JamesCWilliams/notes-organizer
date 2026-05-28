@@ -22,3 +22,30 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Python
+.venv
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+
+# HuggingFace model cache
+.cache/
+
+# ML model weights
+ml-service/models/**/*.bin
+ml-service/models/**/*.safetensors
+ml-service/models/**/*.pt
+ml-service/models/**/*.pth
+ml-service/models/**/*.json
+ml-service/models/**/*.txt
+ml-service/models/**/*.model
+
+# Evaluation samples (downloaded, not source-controlled)
+ml-service/evaluation/samples/*.png
+ml-service/evaluation/samples/*.txt
+
+# Tauri build output
+src-tauri/target/

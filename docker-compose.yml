@@ -1,0 +1,14 @@
+services:
+  ml-service:
+    build: ./ml-service
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./ml-service/models:/app/models
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
