@@ -101,12 +101,39 @@ export function Draw() {
           />
         ))}
       </svg>
-      <div style={{ position: "absolute", top: 16, right: 16, display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 8 }}>
-        <button onClick={handleAnalyze} disabled={analyzing || completedStrokes.length === 0}>
+      <div
+        style={{
+          position: "absolute",
+          top: 16,
+          right: 16,
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "flex-end",
+          gap: 8,
+        }}
+      >
+        <button
+          onClick={handleAnalyze}
+          disabled={analyzing || completedStrokes.length === 0}
+        >
           {analyzing ? "Analyzing…" : "Analyze"}
         </button>
+        <button
+          onClick={() => setCompletedStrokes([])}
+          disabled={analyzing || completedStrokes.length === 0}
+        >
+          Clear
+        </button>
         {transcription !== null && (
-          <div style={{ background: "white", border: "1px solid #ccc", borderRadius: 4, padding: "8px 12px", maxWidth: 300 }}>
+          <div
+            style={{
+              background: "white",
+              border: "1px solid #ccc",
+              borderRadius: 4,
+              padding: "8px 12px",
+              maxWidth: 300,
+            }}
+          >
             {transcription}
           </div>
         )}
