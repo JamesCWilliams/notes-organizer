@@ -29,6 +29,7 @@ __pycache__/
 *.pyc
 *.pyo
 .pytest_cache/
+ml-service/debug/ml_crops/*
 
 
 # HuggingFace model cache
