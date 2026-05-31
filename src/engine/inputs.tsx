@@ -127,6 +127,7 @@ export function Draw() {
         {transcription !== null && (
           <div
             style={{
+              color: "black",
               background: "white",
               border: "1px solid #ccc",
               borderRadius: 4,
