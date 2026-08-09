@@ -1,6 +1,7 @@
 import { getStroke } from "perfect-freehand";
 import { getSvgPathFromStroke } from "./svgpathfromstroke";
 import { useRef, useState } from "react";
+import { saveCanvasData, loadCanvasData } from "./saveCanvasData";
 
 const ML_SERVICE_URL = "http://localhost:5000/transcribe";
 
@@ -70,6 +71,15 @@ export function Draw() {
     setCurrentStroke([]);
   }
 
+  async function handleSave() {
+    await saveCanvasData(completedStrokes);
+  }
+
+  async function handleLoad() {
+    const strokes = await loadCanvasData();
+    if (strokes) setCompletedStrokes(strokes);
+  }
+
   async function handleAnalyze() {
     if (!svgRef.current) return;
     setAnalyzing(true);
@@ -135,6 +145,10 @@ export function Draw() {
         >
           Clear
         </button>
+        <button onClick={handleSave} disabled={completedStrokes.length === 0}>
+          Save
+        </button>
+        <button onClick={handleLoad}>Load</button>
         {transcription !== null && (
           <div
             style={{

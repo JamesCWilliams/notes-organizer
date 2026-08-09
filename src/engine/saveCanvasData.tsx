@@ -1,0 +1,46 @@
+// Persists and restores canvas stroke data as local files via Tauri's fs/dialog
+// plugins. A custom JSON extension is used (rather than .svg/.png) because it
+// preserves the raw stroke points/pressure needed to reload and re-analyze the
+// canvas, not just a flattened image.
+
+import { save, open } from "@tauri-apps/plugin-dialog";
+import { writeTextFile, readTextFile } from "@tauri-apps/plugin-fs";
+
+const FILE_EXTENSION = "canvasnote";
+// Stamped into saved files so future format changes can be migrated on load.
+// Not yet read/checked anywhere — bump this and branch in loadCanvasData
+// when the schema actually changes.
+const FORMAT_VERSION = 1;
+
+interface CanvasData {
+  version: number;
+  strokes: number[][][];
+}
+
+// Returns the saved file path, or null if the user cancelled the dialog.
+export async function saveCanvasData(
+  strokes: number[][][],
+): Promise<string | null> {
+  const path = await save({
+    defaultPath: `canvas.${FILE_EXTENSION}`,
+    filters: [{ name: "Canvas Note", extensions: [FILE_EXTENSION] }],
+  });
+  if (!path) return null;
+
+  const data: CanvasData = { version: FORMAT_VERSION, strokes };
+  await writeTextFile(path, JSON.stringify(data));
+  return path;
+}
+
+// Returns the loaded strokes, or null if the user cancelled the dialog.
+export async function loadCanvasData(): Promise<number[][][] | null> {
+  const path = await open({
+    multiple: false,
+    filters: [{ name: "Canvas Note", extensions: [FILE_EXTENSION] }],
+  });
+  if (!path) return null;
+
+  const raw = await readTextFile(path);
+  const data: CanvasData = JSON.parse(raw);
+  return data.strokes;
+}
