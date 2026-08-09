@@ -1,11 +1,14 @@
-FROM nvidia/cuda:12.1.1-cudnn8-runtime-ubuntu22.04
-
-RUN apt-get update && apt-get install -y python3 python3-pip && rm -rf /var/lib/apt/lists/*
+FROM python:3.11-slim
 
 WORKDIR /app
 
+# CPU-only torch first: the default PyPI wheel drags in ~3GB of CUDA libs the
+# service never uses (inference is pinned to CPU). The cache mount persists
+# pip's download cache across builds without baking it into the image layer.
 COPY requirements.txt .
-RUN pip3 install --no-cache-dir -r requirements.txt
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install torch --index-url https://download.pytorch.org/whl/cpu && \
+    pip install -r requirements.txt
 
 COPY app.py .
 COPY inference/ inference/
@@ -13,4 +16,4 @@ COPY utils/ utils/
 
 EXPOSE 5000
 
-CMD ["python3", "app.py"]
+CMD ["python", "app.py"]
