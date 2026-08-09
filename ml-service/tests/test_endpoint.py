@@ -22,12 +22,20 @@ def _png_data_url() -> str:
     return f'data:image/png;base64,{b64}'
 
 
+_STROKES = [[[10, 10, 0.5], [30, 40, 0.5]]]
+
+
 def test_transcribe_returns_text_key(client):
-    response = client.post('/transcribe', json={'image': _png_data_url()})
+    response = client.post('/transcribe', json={'image': _png_data_url(), 'strokes': _STROKES})
     assert response.status_code == 200
     assert 'text' in response.get_json()
 
 
 def test_transcribe_text_is_string(client):
-    response = client.post('/transcribe', json={'image': _png_data_url()})
+    response = client.post('/transcribe', json={'image': _png_data_url(), 'strokes': _STROKES})
     assert isinstance(response.get_json()['text'], str)
+
+
+def test_transcribe_missing_strokes_is_400(client):
+    response = client.post('/transcribe', json={'image': _png_data_url()})
+    assert response.status_code == 400
