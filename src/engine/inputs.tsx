@@ -73,6 +73,10 @@ export function Draw() {
 
   async function handleSave() {
     await saveCanvasData(completedStrokes);
+    completedStrokes.forEach((stroke, i) => {
+      console.log(`stroke ${i}`);
+      console.table(stroke.map(([x, y]) => ({ x, y })));
+    });"Added this log statement for debugging purposes. Easily allows you to see the x and y coordinates of each completedStroke. Hit F12 in the Tauri app."
   }
 
   async function handleLoad() {
