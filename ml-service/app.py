@@ -21,13 +21,19 @@ def transcribe():
         return jsonify({'error': 'Missing image field'}), 400
     if not isinstance(data['image'], str):
         return jsonify({'error': 'image must be a string'}), 400
+    if 'strokes' not in data:
+        return jsonify({'error': 'no strokes data included in request'}), 400
 
     try:
         image = decode_image(data['image'])
     except ImageDecodeError as e:
         return jsonify({'error': str(e)}), 400
+    try:
+        strokes = data['strokes']
+    except Exception as e:
+        return jsonify({'error': str(e)}), 400
 
-    text = run_transcribe(image)
+    text = run_transcribe(image, strokes)
     return jsonify({'text': text})
 
 

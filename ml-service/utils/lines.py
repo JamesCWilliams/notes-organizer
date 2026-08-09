@@ -1,9 +1,14 @@
+"""
+This file takes a whole screen grab and tries to split it into "lines" of text.
+Super buggy and doesn't work great, but anything with the same signature will
+work downstream.
+"""
 import os
 from pathlib import Path
 
 import numpy as np
 from PIL import Image
-
+#WORK TO BE DONE HERE.
 # Set ML_DEBUG_CROPS=1 to save line crops to /tmp/ml_crops/ for inspection.
 _DEBUG = os.environ.get('ML_DEBUG_CROPS') == '1'
 

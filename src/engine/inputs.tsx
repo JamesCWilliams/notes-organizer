@@ -38,11 +38,19 @@ async function svgElementToPngDataUrl(svg: SVGSVGElement): Promise<string> {
     img.src = url;
   });
 }
+async function svgElementToPngWithStrokes(
+  svg: SVGSVGElement,
+  completedStrokes: number[][][],
+): Promise<[string, number[][][]]> {
+  const pngDataUrl = await svgElementToPngDataUrl(svg);
+  return [pngDataUrl, completedStrokes];
+}
 
 //This is where the engine will gather user inputs from mouse clicks/stylus.
 export function Draw() {
   const [currentStroke, setCurrentStroke] = useState<number[][]>([]);
   const [completedStrokes, setCompletedStrokes] = useState<number[][][]>([]);
+  ("TO DO: Include this data with the PNG image.");
   const [transcription, setTranscription] = useState<string | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
   const svgRef = useRef<SVGSVGElement>(null);
@@ -67,11 +75,14 @@ export function Draw() {
     setAnalyzing(true);
     setTranscription(null);
     try {
-      const image = await svgElementToPngDataUrl(svgRef.current);
+      const [image, strokes] = await svgElementToPngWithStrokes(
+        svgRef.current,
+        completedStrokes,
+      );
       const res = await fetch(ML_SERVICE_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ image }),
+        body: JSON.stringify({ image, strokes }),
       });
       const data = await res.json();
       setTranscription(data.text);

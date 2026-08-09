@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+#bash dev.sh
 set -e
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
