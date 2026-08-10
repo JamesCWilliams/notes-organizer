@@ -15,11 +15,18 @@ const FORMAT_VERSION = 1;
 interface CanvasData {
   version: number;
   strokes: number[][][];
+  sizes: number[];
+}
+
+export interface LoadedCanvasData {
+  strokes: number[][][];
+  sizes: number[];
 }
 
 // Returns the saved file path, or null if the user cancelled the dialog.
 export async function saveCanvasData(
   strokes: number[][][],
+  sizes: number[],
 ): Promise<string | null> {
   const path = await save({
     defaultPath: `canvas.${FILE_EXTENSION}`,
@@ -27,13 +34,13 @@ export async function saveCanvasData(
   });
   if (!path) return null;
 
-  const data: CanvasData = { version: FORMAT_VERSION, strokes };
+  const data: CanvasData = { version: FORMAT_VERSION, strokes, sizes };
   await writeTextFile(path, JSON.stringify(data));
   return path;
 }
 
-// Returns the loaded strokes, or null if the user cancelled the dialog.
-export async function loadCanvasData(): Promise<number[][][] | null> {
+// Returns the loaded strokes/sizes, or null if the user cancelled the dialog.
+export async function loadCanvasData(): Promise<LoadedCanvasData | null> {
   const path = await open({
     multiple: false,
     filters: [{ name: "Canvas Note", extensions: [FILE_EXTENSION] }],
@@ -42,5 +49,5 @@ export async function loadCanvasData(): Promise<number[][][] | null> {
 
   const raw = await readTextFile(path);
   const data: CanvasData = JSON.parse(raw);
-  return data.strokes;
+  return { strokes: data.strokes, sizes: data.sizes };
 }

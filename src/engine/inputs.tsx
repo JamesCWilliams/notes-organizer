@@ -5,13 +5,16 @@ import { saveCanvasData, loadCanvasData } from "./saveCanvasData";
 
 const ML_SERVICE_URL = "http://localhost:5000/transcribe";
 
-const STROKE_OPTS = {
-  size: 16,
-  thinning: 0.5,
-  smoothing: 0.5,
-  streamline: 0.5,
-};
-
+const DEFAULT_STROKE_SIZE = 16;
+function getStrokeOpts(size: number) {
+  return {
+    size,
+    thinning: 0.5,
+    smoothing: 0.5,
+    streamline: 0.5,
+  };
+}
+const STROKE_SIZE_OPTIONS: number[] = [5, 9, 13, 16];
 async function svgElementToPngDataUrl(svg: SVGSVGElement): Promise<string> {
   const { width, height } = svg.getBoundingClientRect();
   // Clone so we can add explicit dimensions without mutating the live element.
@@ -51,9 +54,15 @@ async function svgElementToPngWithStrokes(
 export function Draw() {
   const [currentStroke, setCurrentStroke] = useState<number[][]>([]);
   const [completedStrokes, setCompletedStrokes] = useState<number[][][]>([]);
+  const [completedStrokeSizes, setCompletedStrokeSizes] = useState<number[]>(
+    [],
+  );
   ("TO DO: Include this data with the PNG image.");
   const [transcription, setTranscription] = useState<string | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
+  const [currentStrokeSize, setCurrentStrokeSize] = useState<number>(
+    DEFAULT_STROKE_SIZE,
+  );
   const svgRef = useRef<SVGSVGElement>(null);
 
   function handlePointerDown(e: React.PointerEvent<SVGSVGElement>) {
@@ -68,20 +77,27 @@ export function Draw() {
 
   function handlePointerUp() {
     setCompletedStrokes([...completedStrokes, currentStroke]);
+    setCompletedStrokeSizes([...completedStrokeSizes, currentStrokeSize]);
     setCurrentStroke([]);
   }
-
+  function changeStrokeSize(newSize: number) {
+    setCurrentStrokeSize(newSize);
+  }
   async function handleSave() {
-    await saveCanvasData(completedStrokes);
+    await saveCanvasData(completedStrokes, completedStrokeSizes);
     completedStrokes.forEach((stroke, i) => {
       console.log(`stroke ${i}`);
       console.table(stroke.map(([x, y]) => ({ x, y })));
-    });"Added this log statement for debugging purposes. Easily allows you to see the x and y coordinates of each completedStroke. Hit F12 in the Tauri app."
+    });
+    ("Added this log statement for debugging purposes. Easily allows you to see the x and y coordinates of each completedStroke. Hit F12 in the Tauri app.");
   }
 
   async function handleLoad() {
-    const strokes = await loadCanvasData();
-    if (strokes) setCompletedStrokes(strokes);
+    const loadedCanvasData = await loadCanvasData();
+    if (loadedCanvasData) {
+      setCompletedStrokes(loadedCanvasData.strokes);
+      setCompletedStrokeSizes(loadedCanvasData.sizes);
+    }
   }
 
   async function handleAnalyze() {
@@ -107,7 +123,9 @@ export function Draw() {
     }
   }
 
-  const pathData = getSvgPathFromStroke(getStroke(currentStroke, STROKE_OPTS));
+  const pathData = getSvgPathFromStroke(
+    getStroke(currentStroke, getStrokeOpts(currentStrokeSize)),
+  );
 
   return (
     <div style={{ position: "relative", width: "100vw", height: "100vh" }}>
@@ -122,7 +140,12 @@ export function Draw() {
         {completedStrokes.map((stroke, i) => (
           <path
             key={i}
-            d={getSvgPathFromStroke(getStroke(stroke, STROKE_OPTS))}
+            d={getSvgPathFromStroke(
+              getStroke(
+                stroke,
+                getStrokeOpts(completedStrokeSizes[i]),
+              ),
+            )}
           />
         ))}
       </svg>
@@ -144,7 +167,10 @@ export function Draw() {
           {analyzing ? "Analyzing…" : "Analyze"}
         </button>
         <button
-          onClick={() => setCompletedStrokes([])}
+          onClick={() => {
+            setCompletedStrokes([]);
+            setCompletedStrokeSizes([]);
+          }}
           disabled={analyzing || completedStrokes.length === 0}
         >
           Clear
@@ -153,6 +179,16 @@ export function Draw() {
           Save
         </button>
         <button onClick={handleLoad}>Load</button>
+        <div>
+          {STROKE_SIZE_OPTIONS.map((aSizeOption) => (
+            <button
+              key={aSizeOption}
+              onClick={() => changeStrokeSize(aSizeOption)}
+            >
+              {aSizeOption}
+            </button>
+          ))}
+        </div>
         {transcription !== null && (
           <div
             style={{
