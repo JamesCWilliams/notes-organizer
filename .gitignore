@@ -50,3 +50,6 @@ ml-service/evaluation/samples/*.txt
 
 # Tauri build output
 src-tauri/target/
+
+# saved images directory
+saves/

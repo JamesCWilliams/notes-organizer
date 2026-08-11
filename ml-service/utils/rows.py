@@ -135,8 +135,8 @@ def split_into_rows(strokes: list[Stroke], scale: float) -> list[list[Stroke]]:
         dy = stroke.center_y - prev.center_y # positive = moved down
 
         carriage_return = (
-            (dx < -_LEFT_JUMP_FACTOR * scale and dy > _DOWN_SHIFT_FACTOR * scale)
-            or dy > _DOWN_ONLY_FACTOR * scale
+            (dx < -_LEFT_JUMP_FACTOR * scale and dy > _DOWN_SHIFT_FACTOR * scale) # x goes right-to-left and y goes down
+            or dy > _DOWN_ONLY_FACTOR * scale # only y goes down
         )
         # Delayed i-dots / t-crosses / fix-ups land back inside the current
         # row's band, keep them there regardless of the jump
@@ -171,10 +171,12 @@ def segment_rows(image: Image.Image, strokes: list[list[list[float]]]) -> list[I
         y_min = min(s.bbox[1] for s in row)
         x_max = max(s.bbox[2] for s in row)
         y_max = max(s.bbox[3] for s in row)
+
         left = max(0, int(x_min) - _CROP_PADDING)
         top = max(0, int(y_min) - _CROP_PADDING)
         right = min(img_w, int(x_max) + _CROP_PADDING)
         bottom = min(img_h, int(y_max) + _CROP_PADDING)
+        
         result.append(image.crop((left, top, right, bottom)))
 
     if _DEBUG:
