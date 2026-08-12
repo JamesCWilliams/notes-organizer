@@ -5,6 +5,9 @@ set -e
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 PORT=5000
 
+# ML service will save inputs and outputs for each prediction
+export ML_DEBUG="true"
+
 # Fail fast if something already holds the port (stale container, old run).
 if [ -n "$(ss -ltnH "sport = :$PORT")" ]; then
   echo "Error: port $PORT is already in use. Find the holder with:"

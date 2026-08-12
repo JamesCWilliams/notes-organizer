@@ -5,3 +5,6 @@ services:
       - "5000:5000"
     volumes:
       - ./ml-service/models:/app/models
+      - ./ml-service/debug:/app/debug
+    environment:
+      - ML_DEBUG=${ML_DEBUG:-false}

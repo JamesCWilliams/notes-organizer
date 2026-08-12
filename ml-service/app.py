@@ -1,7 +1,12 @@
+import os
+
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from utils.image import decode_image, ImageDecodeError
 from inference.transcribe import transcribe as run_transcribe
+
+
+ML_DEBUG = os.environ.get('ML_DEBUG', 'false').lower() == 'true'
 
 
 app = Flask(__name__)
@@ -33,7 +38,7 @@ def transcribe():
     except Exception as e:
         return jsonify({'error': str(e)}), 400
 
-    text = run_transcribe(image, strokes)
+    text = run_transcribe(image, strokes, ML_DEBUG)
     return jsonify({'text': text})
 
 
