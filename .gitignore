@@ -36,17 +36,10 @@ ml-service/debug/
 .cache/
 
 # ML model weights
-ml-service/models/**/*.bin
-ml-service/models/**/*.safetensors
-ml-service/models/**/*.pt
-ml-service/models/**/*.pth
-ml-service/models/**/*.json
-ml-service/models/**/*.txt
-ml-service/models/**/*.model
+ml-service/models/
 
 # Evaluation samples (downloaded, not source-controlled)
-ml-service/evaluation/samples/*.png
-ml-service/evaluation/samples/*.txt
+ml-service/evaluation/samples/
 
 # Tauri build output
 src-tauri/target/

@@ -5,10 +5,6 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-
-# Set ML_DEBUG_CROPS=1 to save word crops to debug/ml_crops/ for inspection
-_DEBUG = os.environ.get('ML_DEBUG_CROPS') == '1'
-
 # Pressure assigned to points that arrive as bare [x, y]
 _DEFAULT_PRESSURE = 0.5
 
@@ -178,12 +174,5 @@ def segment_rows(image: Image.Image, strokes: list[list[list[float]]]) -> list[I
         bottom = min(img_h, int(y_max) + _CROP_PADDING)
         
         result.append(image.crop((left, top, right, bottom)))
-
-    if _DEBUG:
-        debug_dir = Path('debug/ml_crops')
-        debug_dir.mkdir(parents=True, exist_ok=True)
-        for i, crop in enumerate(result):
-            crop.save(debug_dir / f'row{i}.png')
-        print(f'[debug] {len(result)} row crop(s) saved to {debug_dir}')
 
     return result
