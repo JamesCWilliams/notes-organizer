@@ -1,9 +1,0 @@
-flask
-flask-cors
-torch
-transformers
-pillow
-opencv-python-headless
-pytest
-jiwer
-datasets

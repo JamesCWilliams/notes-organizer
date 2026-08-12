@@ -1,14 +1,17 @@
 FROM python:3.11-slim
 
+COPY --from=ghcr.io/astral-sh/uv:0.11 /uv /uvx /bin/
+
 WORKDIR /app
 
-# CPU-only torch first: the default PyPI wheel drags in ~3GB of CUDA libs the
-# service never uses (inference is pinned to CPU). The cache mount persists
-# pip's download cache across builds without baking it into the image layer.
-COPY requirements.txt .
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install torch --index-url https://download.pytorch.org/whl/cpu && \
-    pip install -r requirements.txt
+# Runtime deps only (--no-dev skips pytest/eval tooling). The lockfile pins
+# CPU-only torch from the pytorch index, so no CUDA libs. The cache mount
+# persists uv's download cache across builds without baking it into the image
+ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy
+RUN --mount=type=cache,target=/root/.cache/uv \
+    --mount=type=bind,source=uv.lock,target=uv.lock \
+    --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
+    uv sync --frozen --no-dev
 
 COPY app.py .
 COPY inference/ inference/
@@ -16,4 +19,5 @@ COPY utils/ utils/
 
 EXPOSE 5000
 
+ENV PATH="/app/.venv/bin:$PATH"
 CMD ["python", "app.py"]

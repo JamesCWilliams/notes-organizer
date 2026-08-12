@@ -31,8 +31,13 @@ if docker info &>/dev/null; then
 else
   echo "Docker not available, starting ML service directly..."
   cd "$ROOT/ml-service"
-  if [ -f .venv/bin/python ]; then PYTHON=.venv/bin/python; else PYTHON=python3; fi
-  $PYTHON app.py &
+  if command -v uv &>/dev/null; then
+    uv run python app.py &   # syncs .venv from uv.lock automatically
+  elif [ -f .venv/bin/python ]; then
+    .venv/bin/python app.py &
+  else
+    python3 app.py &
+  fi
   ML_PID=$!
   cd "$ROOT"
 fi
