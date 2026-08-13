@@ -2,8 +2,12 @@ import os
 
 from flask import Flask, request, jsonify
 from flask_cors import CORS
+
 from utils.image import decode_image, ImageDecodeError
+from utils.rows import StrokeDataError
 from inference.transcribe import transcribe as run_transcribe
+from embedding.text import embed_text
+from embedding.image import embed_image
 
 
 ML_DEBUG = os.environ.get('ML_DEBUG', 'false').lower() == 'true'
@@ -19,27 +23,68 @@ CORS(app, origins=[
 ])
 
 
-@app.route('/transcribe', methods=['POST'])
-def transcribe():
+def _parse_payload():
+    """Validates the request body shared by /transcribe and /analyze.
+
+    Returns (image, strokes, None) on success, or (None, None, response)
+    where response is a ready-to-return Flask error response.
+    """
     data = request.get_json(silent=True)
     if not data or 'image' not in data:
-        return jsonify({'error': 'Missing image field'}), 400
+        return None, None, (jsonify({'error': 'Missing image field'}), 400)
     if not isinstance(data['image'], str):
-        return jsonify({'error': 'image must be a string'}), 400
+        return None, None, (jsonify({'error': 'image must be a string'}), 400)
     if 'strokes' not in data:
-        return jsonify({'error': 'no strokes data included in request'}), 400
+        return None, None, (jsonify({'error': 'no strokes data included in request'}), 400)
 
     try:
         image = decode_image(data['image'])
     except ImageDecodeError as e:
-        return jsonify({'error': str(e)}), 400
+        return None, None, (jsonify({'error': str(e)}), 400)
+
+    return image, data['strokes'], None
+
+
+@app.route('/transcribe', methods=['POST'])
+def transcribe():
+    image, strokes, error = _parse_payload()
+    if error:
+        return error
+    if not image:
+        return jsonify({'error': 'image is empty'}), 400
+    if not strokes:
+        return jsonify({'error': 'strokes list is empty'}), 400
     try:
-        strokes = data['strokes']
-    except Exception as e:
+        text = run_transcribe(image, strokes, ML_DEBUG)
+    except StrokeDataError as e:
+        return jsonify({'error': str(e)}), 400
+    return jsonify({'text': text})
+
+
+@app.route('/analyze', methods=['POST'])
+def analyze():
+    """Transcription plus embeddings, for enriching saved notes."""
+    image, strokes, error = _parse_payload()
+    if error:
+        return error
+    if not image:
+        return jsonify({'error': 'image is empty'}), 400
+    if not strokes:
+        return jsonify({'error': 'strokes list is empty'}), 400
+    try:
+        text = run_transcribe(image, strokes, ML_DEBUG)
+    except StrokeDataError as e:
         return jsonify({'error': str(e)}), 400
 
-    text = run_transcribe(image, strokes, ML_DEBUG)
-    return jsonify({'text': text})
+    return jsonify({
+        'text': text,
+        'embeddings': {
+            # A note with no recognizable text (e.g. a pure doodle) gets no
+            # text vector rather than a meaningless one.
+            'text': embed_text(text) if text.strip() else None,
+            'image': embed_image(image),
+        },
+    })
 
 
 if __name__ == '__main__':

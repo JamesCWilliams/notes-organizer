@@ -8,20 +8,57 @@ import { writeTextFile, readTextFile } from "@tauri-apps/plugin-fs";
 
 const FILE_EXTENSION = "canvasnote";
 // Stamped into saved files so future format changes can be migrated on load.
-// Not yet read/checked anywhere — bump this and branch in loadCanvasData
+// Not yet read/checked anywhere, bump this and branch in loadCanvasData
 // when the schema actually changes.
 const FORMAT_VERSION = 2;
 
-// Transcriptions from ML service, null if service is unreachable
+// One embedding vector plus the model that produced it. Vectors are unit
+// length and only comparable to vectors from the same model.
+export interface EmbeddingRecord {
+  model: string;
+  dim: number;
+  vector: number[];
+}
+
+// Transcription + embeddings from ML service, null if service is unreachable
 export interface Analysis {
   analyzedAt: string; // timestamp
   text: string;
+  embeddings: {
+    text: EmbeddingRecord | null; // null when no text was recognized (pure doodle)
+    image: EmbeddingRecord;
+  };
 }
 
 interface CanvasData {
   version: number;
   strokes: number[][][];
   analysis: Analysis | null;
+}
+
+// Formats an object with one key per row, each value compact on one line.
+// indent is the indentation of the line the object starts on.
+function formatObjectPerKey(obj: object, indent: string): string {
+  const fields = Object.entries(obj).map(
+    ([key, value]) => `${indent}  ${JSON.stringify(key)}: ${JSON.stringify(value)}`,
+  );
+  return "{\n" + fields.join(",\n") + "\n" + indent + "}";
+}
+
+// Analysis fields each get their own row too, and so do the entries inside
+// embeddings (text, image, eventually strokes), but each vector stays
+// compact on one line, since full pretty-printing would put every number on
+// its own row.
+function formatAnalysis(analysis: Analysis | null): string {
+  if (analysis === null) return "null";
+  const fields = Object.entries(analysis).map(([key, value]) => {
+    const formatted =
+      key === "embeddings"
+        ? formatObjectPerKey(value, "    ")
+        : JSON.stringify(value);
+    return `    ${JSON.stringify(key)}: ${formatted}`;
+  });
+  return "{\n" + fields.join(",\n") + "\n  }";
 }
 
 // Writes a .canvasnote file at the given path; format it nicely so the strokes stay on one line,
@@ -31,12 +68,11 @@ export async function writeCanvasFile(
   strokes: number[][][],
   analysis: Analysis | null
 ): Promise<void> {
-  const analysisJson = JSON.stringify(analysis, null, 2).replace(/\n/g, "\n ");
   const json = [
     "{",
     `  "version": ${FORMAT_VERSION},`,
     `  "strokes": ${JSON.stringify(strokes)},`,
-    `  "analysis": ${analysisJson}`,
+    `  "analysis": ${formatAnalysis(analysis)}`,
     "}",
   ].join("\n");
   await writeTextFile(path, json);

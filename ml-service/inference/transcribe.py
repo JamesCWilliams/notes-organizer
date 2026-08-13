@@ -18,6 +18,9 @@ model_source = LOCAL_MODEL_DIR if LOCAL_MODEL_DIR.exists() else MODEL_NAME
 
 device = torch.device('cpu')
 
+# The label tells apart the otherwise-identical "Loading weights" bars that
+# transformers prints for each model at startup.
+print(f'Loading TrOCR from {model_source}...', flush=True)
 processor = TrOCRProcessor.from_pretrained(model_source)
 model = VisionEncoderDecoderModel.from_pretrained(model_source)
 

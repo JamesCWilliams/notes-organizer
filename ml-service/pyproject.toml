@@ -8,8 +8,11 @@ dependencies = [
     "flask-cors",
     "torch",
     "transformers",
+    "sentence-transformers",
     "pillow",
     "opencv-python-headless",
+    "sentencepiece>=0.2.2",
+    "protobuf>=7.35.1",
 ]
 
 [dependency-groups]

@@ -2,6 +2,8 @@
 
 This runs a small Flask server that takes a handwriting image plus the raw pen strokes and spits back transcribed text using a pretrained model from Microsoft (TrOCR). The strokes are used to split the canvas into rows of writing (`utils/rows.py`), then each row is cropped out of the image and transcribed separately with beam search, best candidate wins.
 
+It also produces embeddings for note similarity: the transcription is embedded with MiniLM (`embedding/text.py`) and the canvas image with SigLIP (`embedding/image.py`). SigLIP puts images and text in one shared space, so typed queries can later be matched against image vectors directly. All vectors are unit length, cosine similarity between two of them is just a dot product, and vectors are only comparable to others from the same model, which is why each one is stored with the model name that produced it.
+
 Everything runs on CPU: torch is deliberately pinned to the CPU-only wheels (the CUDA ones drag in ~3GB of libraries this service never uses).
 
 ## getting started
@@ -16,9 +18,9 @@ That creates/updates `.venv` from the lockfile automatically on first run and st
 
 Alternatively, `bash dev.sh` from the repo root starts this service and the Tauri frontend together.
 
-## the endpoint
+## the endpoints
 
-`POST /transcribe` with a JSON body:
+Both take the same JSON body:
 
 ```json
 {
@@ -27,18 +29,34 @@ Alternatively, `bash dev.sh` from the repo root starts this service and the Taur
 }
 ```
 
-`image` is the rendered canvas as a base64 PNG data URL, `strokes` is one array per pen stroke of `[x, y, pressure]` points (bare `[x, y]` also accepted). Returns `{ "text": "..." }` with rows joined by newlines.
+`image` is the rendered canvas as a base64 PNG data URL, `strokes` is one array per pen stroke of `[x, y, pressure]` points (bare `[x, y]` also accepted).
+
+`POST /transcribe` returns `{ "text": "..." }` with rows joined by newlines. This is what the Analyze button uses.
+
+`POST /analyze` runs transcription plus both embeddings — it's what enriches `.canvasnote` files on save:
+
+```json
+{
+  "text": "...",
+  "embeddings": {
+    "text":  { "model": "all-MiniLM-L6-v2", "dim": 384, "vector": [...] },
+    "image": { "model": "google/siglip-base-patch16-224", "dim": 768, "vector": [...] }
+  }
+}
+```
+
+`embeddings.text` is `null` when no text was recognized (a pure doodle).
 
 ## running with docker
 
-Download the model weights first (one time, ~1.3GB):
+Download the model weights first (one time, ~2.2GB across TrOCR and the embedding models):
 
 ```bash
 cd ml-service
-uv run python download_model.py
+uv run python download_models.py
 ```
 
-This saves the weights to `ml-service/models/trocr-base-handwritten/`. That folder is mounted into the container as a volume so they don't get re-downloaded on every build. There's some warning about pooler weights being missing, don't worry about it, it is spam.
+This saves the weights under `ml-service/models/`. That folder is mounted into the container as a volume so they don't get re-downloaded on every build. There's some warning about pooler weights being missing, don't worry about it, it is spam.
 
 Then from the repo root:
 
@@ -96,8 +114,13 @@ WER is basically "what percentage of words did it get wrong." Somewhere around 3
 ```
 app.py               the flask server, just routes
 pyproject.toml       dependencies (uv manages these; uv.lock pins them)
+download_models.py   fetches all model weights into models/, safe to rerun
 inference/
   transcribe.py      loads TrOCR, runs beam-search transcription per row
+embedding/
+  text.py            MiniLM text embeddings of transcriptions
+  image.py           SigLIP image embeddings (+ text tower for cross-modal queries)
+  strokes.py         (empty for now) future stroke-sequence embeddings
 utils/
   rows.py            stroke-based row segmentation and cropping
   image.py           decodes the base64 image from the request
@@ -108,6 +131,6 @@ evaluation/
 tests/
   test_image.py      tests for the image decoding util
   test_endpoint.py   tests for the flask endpoint (runs real inference)
-models/              model weights live here (download_model.py fills it)
+models/              model weights live here (download_models.py fills it)
 debug/               per-prediction dumps when ML_DEBUG=true
 ```

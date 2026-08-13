@@ -4,7 +4,7 @@ import { useRef, useState } from "react";
 import { saveCanvasData, loadCanvasData, writeCanvasFile, Analysis } from "./saveCanvasData";
 
 
-const ML_SERVICE_URL = "http://localhost:5000/transcribe";
+const ML_SERVICE_BASE = "http://localhost:5000";
 
 const STROKE_OPTS = {
   size: 16,
@@ -40,12 +40,22 @@ async function svgElementToPngDataUrl(svg: SVGSVGElement): Promise<string> {
     img.src = url;
   });
 }
-async function svgElementToPngWithStrokes(
+// Renders the canvas SVG to a PNG and posts it with the strokes to the ML
+// service ("transcribe" or "analyze"). Returns the parsed response body;
+// throws if the service is unreachable or responds with an error status.
+async function postCanvas(
+  endpoint: "transcribe" | "analyze",
   svg: SVGSVGElement,
-  completedStrokes: number[][][],
-): Promise<[string, number[][][]]> {
-  const pngDataUrl = await svgElementToPngDataUrl(svg);
-  return [pngDataUrl, completedStrokes];
+  strokes: number[][][],
+) {
+  const image = await svgElementToPngDataUrl(svg);
+  const res = await fetch(`${ML_SERVICE_BASE}/${endpoint}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ image, strokes }),
+  });
+  if (!res.ok) throw new Error(`ML service returned ${res.status}`);
+  return res.json();
 }
 
 //This is where the engine will gather user inputs from mouse clicks/stylus.
@@ -76,15 +86,12 @@ export function Draw() {
     const path = await saveCanvasData(completedStrokes);
     if (!path || !svgRef.current) return;
     try {
-      const [image, strokes] = await svgElementToPngWithStrokes(svgRef.current, completedStrokes);
-      const res = await fetch(ML_SERVICE_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ image, strokes }),
-      });
-      if (!res.ok) throw new Error(`ML service returned ${res.status}`);
-      const data = await res.json();
-      const analysis: Analysis = { analyzedAt: new Date().toISOString(), text: data.text };
+      const data = await postCanvas("analyze", svgRef.current, completedStrokes);
+      const analysis: Analysis = {
+        analyzedAt: new Date().toISOString(),
+        text: data.text,
+        embeddings: data.embeddings,
+      };
       await writeCanvasFile(path, completedStrokes, analysis);
     } catch {
       // ML service not available, file saved with analysis: null
@@ -105,16 +112,7 @@ export function Draw() {
     setAnalyzing(true);
     setTranscription(null);
     try {
-      const [image, strokes] = await svgElementToPngWithStrokes(
-        svgRef.current,
-        completedStrokes,
-      );
-      const res = await fetch(ML_SERVICE_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ image, strokes }),
-      });
-      const data = await res.json();
+      const data = await postCanvas("transcribe", svgRef.current, completedStrokes);
       setTranscription(data.text);
     } catch (e) {
       setTranscription("Error: could not reach ML service.");
