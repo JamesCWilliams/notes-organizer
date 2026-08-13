@@ -1,26 +1,33 @@
 # ml-service
 
-This runs a small Flask server that takes a handwriting image and spits back transcribed text using a pretrained model from Microsoft (TrOCR).
+This runs a small Flask server that takes a handwriting image plus the raw pen strokes and spits back transcribed text using a pretrained model from Microsoft (TrOCR). The strokes are used to split the canvas into rows of writing (`utils/rows.py`), then each row is cropped out of the image and transcribed separately with beam search, best candidate wins.
+
+Everything runs on CPU — torch is deliberately pinned to the CPU-only wheels (the CUDA ones drag in ~3GB of libraries this service never uses).
 
 ## getting started
 
-Make sure you're in the `ml-service` folder, then set up a virtual environment:
+Dependencies are managed with [uv](https://docs.astral.sh/uv/) (`pyproject.toml` + `uv.lock`, no requirements.txt anymore). From the `ml-service` folder:
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+uv run python app.py
 ```
 
-Then run the server:
+That creates/updates `.venv` from the lockfile automatically on first run and starts the server on port 5000. To add or upgrade dependencies use `uv add <package>` / `uv lock --upgrade` so the lockfile stays in sync.
 
-```bash
-python app.py
+Alternatively, `bash dev.sh` from the repo root starts this service and the Tauri frontend together.
+
+## the endpoint
+
+`POST /transcribe` with a JSON body:
+
+```json
+{
+  "image": "data:image/png;base64,...",
+  "strokes": [[[x, y, pressure], ...], ...]
+}
 ```
 
-It'll be listening on port 5000. The one endpoint is `POST /transcribe`, send it a JSON body with an `image` key containing a base64-encoded PNG and it'll return `{ "text": "..." }`.
-
-If you have a GPU it'll use it automatically, otherwise it falls back to CPU.
+`image` is the rendered canvas as a base64 PNG data URL, `strokes` is one array per pen stroke of `[x, y, pressure]` points (bare `[x, y]` also accepted). Returns `{ "text": "..." }` with rows joined by newlines.
 
 ## running with docker
 
@@ -28,7 +35,7 @@ Download the model weights first (one time, ~1.3GB):
 
 ```bash
 cd ml-service
-python download_model.py
+uv run python download_model.py
 ```
 
 This saves the weights to `ml-service/models/trocr-base-handwritten/`. That folder is mounted into the container as a volume so they don't get re-downloaded on every build. There's some warning about pooler weights being missing, don't worry about it, it is spam.
@@ -36,25 +43,36 @@ This saves the weights to `ml-service/models/trocr-base-handwritten/`. That fold
 Then from the repo root:
 
 ```bash
-docker compose up --build
+bash dev.sh --docker    # or: docker compose up --build
 ```
 
-That builds the image and starts the server on port 5000. To stop it: `ctrl+c`, then `docker compose down`.
+The image installs from the lockfile (`uv sync --frozen --no-dev`), so test/eval dependencies stay out of it. No GPU needed — see the CPU note above.
 
-**GPU requirement:** the container expects an NVIDIA GPU and the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html) to be installed on the host. If you don't have that set up, the container will fail to start. In that case just run it locally with `python app.py` instead — it'll fall back to CPU.
+## debug logging
+
+Set `ML_DEBUG=true` (dev.sh does this) and every prediction dumps its inputs and outputs under `debug/transcription/<timestamp>/`:
+
+```
+input_image.png     the canvas as received
+strokes.json        the raw strokes as received
+row_0.png, ...      the per-row crops fed to TrOCR
+predictions.json    per-row top-5 candidates with confidences, plus timings
+```
+
+Handy for figuring out whether a bad transcription came from row segmentation or from the model. When running Dockerized the folder is volume-mounted, so dumps land on the host either way.
 
 ## testing
 
 Unit tests (no model needed, runs fast):
 
 ```bash
-pytest tests/test_image.py
+uv run pytest tests/test_image.py
 ```
 
-Full endpoint test (downloads the model on first run, ~1.3GB):
+Full endpoint test (downloads the model on first run if `models/` is empty, ~1.3GB):
 
 ```bash
-pytest tests/test_endpoint.py
+uv run pytest tests/test_endpoint.py
 ```
 
 ## checking if the model actually works
@@ -62,13 +80,13 @@ pytest tests/test_endpoint.py
 Grab some handwriting samples from the IAM dataset:
 
 ```bash
-python evaluation/download_iam_samples.py --count 20
+uv run python evaluation/download_iam_samples.py --count 20
 ```
 
 Then run the evaluation to see Word Error Rate:
 
 ```bash
-python evaluation/evaluate.py
+uv run python evaluation/evaluate.py
 ```
 
 WER is basically "what percentage of words did it get wrong." Somewhere around 3-8% is what you'd expect on lots of clean handwriting. I'm getting like 20% from a small sample (20) of a large research dataset.
@@ -77,9 +95,11 @@ WER is basically "what percentage of words did it get wrong." Somewhere around 3
 
 ```
 app.py               the flask server, just routes
+pyproject.toml       dependencies (uv manages these; uv.lock pins them)
 inference/
-  transcribe.py      loads the model and does the actual inference
+  transcribe.py      loads TrOCR, runs beam-search transcription per row
 utils/
+  rows.py            stroke-based row segmentation and cropping
   image.py           decodes the base64 image from the request
 evaluation/
   evaluate.py        computes WER over sample images
@@ -87,6 +107,7 @@ evaluation/
   samples/           put .png + .txt pairs here (matched by filename)
 tests/
   test_image.py      tests for the image decoding util
-  test_endpoint.py   tests for the flask endpoint
-models/              model weights live here if you download them manually
+  test_endpoint.py   tests for the flask endpoint (runs real inference)
+models/              model weights live here (download_model.py fills it)
+debug/               per-prediction dumps when ML_DEBUG=true
 ```
