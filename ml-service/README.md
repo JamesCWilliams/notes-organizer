@@ -2,7 +2,7 @@
 
 This runs a small Flask server that takes a handwriting image plus the raw pen strokes and spits back transcribed text using a pretrained model from Microsoft (TrOCR). The strokes are used to split the canvas into rows of writing (`utils/rows.py`), then each row is cropped out of the image and transcribed separately with beam search, best candidate wins.
 
-Everything runs on CPU — torch is deliberately pinned to the CPU-only wheels (the CUDA ones drag in ~3GB of libraries this service never uses).
+Everything runs on CPU: torch is deliberately pinned to the CPU-only wheels (the CUDA ones drag in ~3GB of libraries this service never uses).
 
 ## getting started
 
@@ -46,7 +46,7 @@ Then from the repo root:
 bash dev.sh --docker    # or: docker compose up --build
 ```
 
-The image installs from the lockfile (`uv sync --frozen --no-dev`), so test/eval dependencies stay out of it. No GPU needed — see the CPU note above.
+The image installs from the lockfile (`uv sync --frozen --no-dev`), so test/eval dependencies stay out of it. No GPU needed, see the CPU note above.
 
 ## debug logging
 
