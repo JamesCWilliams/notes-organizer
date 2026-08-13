@@ -1,7 +1,8 @@
 import { getStroke } from "perfect-freehand";
 import { getSvgPathFromStroke } from "./svgpathfromstroke";
 import { useRef, useState } from "react";
-import { saveCanvasData, loadCanvasData } from "./saveCanvasData";
+import { saveCanvasData, loadCanvasData, writeCanvasFile, Analysis } from "./saveCanvasData";
+
 
 const ML_SERVICE_URL = "http://localhost:5000/transcribe";
 
@@ -72,7 +73,22 @@ export function Draw() {
   }
 
   async function handleSave() {
-    await saveCanvasData(completedStrokes);
+    const path = await saveCanvasData(completedStrokes);
+    if (!path || !svgRef.current) return;
+    try {
+      const [image, strokes] = await svgElementToPngWithStrokes(svgRef.current, completedStrokes);
+      const res = await fetch(ML_SERVICE_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ image, strokes }),
+      });
+      if (!res.ok) throw new Error(`ML service returned ${res.status}`);
+      const data = await res.json();
+      const analysis: Analysis = { analyzedAt: new Date().toISOString(), text: data.text };
+      await writeCanvasFile(path, completedStrokes, analysis);
+    } catch {
+      // ML service not available, file saved with analysis: null
+    }
     completedStrokes.forEach((stroke, i) => {
       console.log(`stroke ${i}`);
       console.table(stroke.map(([x, y]) => ({ x, y })));

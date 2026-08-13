@@ -10,11 +10,36 @@ const FILE_EXTENSION = "canvasnote";
 // Stamped into saved files so future format changes can be migrated on load.
 // Not yet read/checked anywhere — bump this and branch in loadCanvasData
 // when the schema actually changes.
-const FORMAT_VERSION = 1;
+const FORMAT_VERSION = 2;
+
+// Transcriptions from ML service, null if service is unreachable
+export interface Analysis {
+  analyzedAt: string; // timestamp
+  text: string;
+}
 
 interface CanvasData {
   version: number;
   strokes: number[][][];
+  analysis: Analysis | null;
+}
+
+// Writes a .canvasnote file at the given path; format it nicely so the strokes stay on one line,
+// but so that each header gets its own row
+export async function writeCanvasFile(
+  path: string,
+  strokes: number[][][],
+  analysis: Analysis | null
+): Promise<void> {
+  const analysisJson = JSON.stringify(analysis, null, 2).replace(/\n/g, "\n ");
+  const json = [
+    "{",
+    `  "version": ${FORMAT_VERSION},`,
+    `  "strokes": ${JSON.stringify(strokes)},`,
+    `  "analysis": ${analysisJson}`,
+    "}",
+  ].join("\n");
+  await writeTextFile(path, json);
 }
 
 // Returns the saved file path, or null if the user cancelled the dialog.
@@ -27,8 +52,7 @@ export async function saveCanvasData(
   });
   if (!path) return null;
 
-  const data: CanvasData = { version: FORMAT_VERSION, strokes };
-  await writeTextFile(path, JSON.stringify(data));
+  await writeCanvasFile(path, strokes, null);
   return path;
 }
 
