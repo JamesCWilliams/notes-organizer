@@ -1,0 +1,23 @@
+[project]
+name = "training"
+version = "0.1.0"
+description = "Stroke encoder training for notes-organizer"
+requires-python = ">=3.11"
+# Plain PyPI torch on Linux IS the CUDA build, which is what we want here.
+# ml-service deliberately pins the CPU-only wheels instead; the two projects
+# have separate lockfiles so neither constrains the other.
+dependencies = [
+    "torch",
+    "numpy",
+    "requests",
+    "tqdm",
+    "pillow>=12.3.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest",
+]
+
+[tool.uv]
+package = false

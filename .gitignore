@@ -35,8 +35,15 @@ ml-service/debug/
 # HuggingFace model cache
 .cache/
 
-# ML model weights
+# ML model weights (downloaded from HuggingFace by download_models.py)...
 ml-service/models/
+# ...except stroke encoders, which we train ourselves: small, and nobody else
+# can re-download them.
+!ml-service/models/stroke-encoder-*/
+
+# Training datasets and checkpoints (QuickDraw is tens of GB)
+training/data/
+training/checkpoints/
 
 # Evaluation samples (downloaded, not source-controlled)
 ml-service/evaluation/samples/
