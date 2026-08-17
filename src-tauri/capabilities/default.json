@@ -9,6 +9,11 @@
     "fs:default",
     "fs:allow-write-text-file",
     "fs:allow-read-text-file",
-    "dialog:default"
+    "fs:allow-mkdir",
+    "dialog:default",
+    {
+      "identifier": "fs:scope",
+      "allow": [{ "path": "$HOME/**" }]
+    }
   ]
 }

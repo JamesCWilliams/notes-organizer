@@ -7,7 +7,7 @@ the whole reason for using it over a pure-vision model: cross-modal search
 comes for free.
 
 Vectors are unit length (cosine similarity = dot product) and only comparable
-to other vectors from this same model — including across the two towers:
+to other vectors from this same model, including across the two towers:
 embed_query vectors match embed_image vectors, not text.py's.
 """
 

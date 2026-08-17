@@ -23,14 +23,14 @@ npm install        # first time only
 bash dev.sh
 ```
 
-`dev.sh` starts the ML service (first run downloads the ~1.3GB TrOCR weights), waits for it to come up, then launches the app. Add `--docker` if you'd rather run the ML service in a container.
+`dev.sh` starts the ML service (first run downloads the pretrained model weights, a couple GB), waits for it to come up, then launches the app. Add `--docker` if you'd rather run the ML service in a container.
 
 ## layout
 
 ```
 src/               the React frontend (canvas, save/load, talking to the ML service)
 src-tauri/         Tauri shell (Rust)
-ml-service/        Flask + TrOCR transcription service, has its own README
+ml-service/        Flask server which handles transcriptions and embedding, has its own README
 saves/             .canvasnote files end up wherever you save them; samples live here
 dev.sh             starts everything for development
 training/          Training environment for new ML models, has its own README

@@ -4,9 +4,18 @@ import react from "@vitejs/plugin-react";
 // @ts-expect-error process is a nodejs global
 const host = process.env.TAURI_DEV_HOST;
 
+// Absolute path to the repo's saves/ folder, where notes live. Resolved here
+// rather than in the app because Tauri exposes app-data/home/resource dirs but
+// no working directory, so the frontend has no way to locate the repo at
+// runtime. npm scripts run from the repo root, so cwd is that root.
+// @ts-expect-error process is a nodejs global
+const savesDir = `${process.cwd()}/saves`;
+
 // https://vite.dev/config/
 export default defineConfig(async () => ({
   plugins: [react()],
+
+  define: { __SAVES_DIR__: JSON.stringify(savesDir) },
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //

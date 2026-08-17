@@ -4,9 +4,13 @@
 // canvas, not just a flattened image.
 
 import { save, open } from "@tauri-apps/plugin-dialog";
-import { writeTextFile, readTextFile } from "@tauri-apps/plugin-fs";
+import { writeTextFile, readTextFile, mkdir } from "@tauri-apps/plugin-fs";
+import { join } from "@tauri-apps/api/path";
 
 const FILE_EXTENSION = "canvasnote";
+// Notes default into one folder so there is a fixed set to compare a canvas
+// against, rather than notes scattered wherever the dialog last pointed.
+const SAVES_DIR = __SAVES_DIR__;
 // Stamped into saved files so future format changes can be migrated on load.
 // Not yet read/checked anywhere, bump this and branch in loadCanvasData
 // when the schema actually changes.
@@ -79,12 +83,20 @@ export async function writeCanvasFile(
   await writeTextFile(path, json);
 }
 
+// Creates the saves folder if it is missing and returns it. A recursive mkdir
+// over an existing directory is a no-op, so this is cheap to call before every
+// save and needs no separate existence check.
+export async function ensureSavesDir(): Promise<string> {
+  await mkdir(SAVES_DIR, { recursive: true });
+  return SAVES_DIR;
+}
+
 // Returns the saved file path, or null if the user cancelled the dialog.
 export async function saveCanvasData(
   strokes: number[][][],
 ): Promise<string | null> {
   const path = await save({
-    defaultPath: `canvas.${FILE_EXTENSION}`,
+    defaultPath: await join(await ensureSavesDir(), `canvas.${FILE_EXTENSION}`),
     filters: [{ name: "Canvas Note", extensions: [FILE_EXTENSION] }],
   });
   if (!path) return null;
@@ -97,6 +109,7 @@ export async function saveCanvasData(
 export async function loadCanvasData(): Promise<number[][][] | null> {
   const path = await open({
     multiple: false,
+    defaultPath: await ensureSavesDir(),
     filters: [{ name: "Canvas Note", extensions: [FILE_EXTENSION] }],
   });
   if (!path) return null;
