@@ -1,14 +1,14 @@
 import os
 
-from flask import Flask, request, jsonify
+from flask import Flask, jsonify, request
 from flask_cors import CORS
 
-from utils.image import decode_image, ImageDecodeError
-from utils.rows import StrokeDataError
-from inference.transcribe import transcribe as run_transcribe
-from embedding.text import embed_text
 from embedding.image import embed_image
-
+from embedding.strokes import embed_strokes
+from embedding.text import embed_text
+from inference.transcribe import transcribe as run_transcribe
+from utils.image import ImageDecodeError, decode_image
+from utils.rows import StrokeDataError
 
 ML_DEBUG = os.environ.get('ML_DEBUG', 'false').lower() == 'true'
 
@@ -83,6 +83,8 @@ def analyze():
             # text vector rather than a meaningless one.
             'text': embed_text(text) if text.strip() else None,
             'image': embed_image(image),
+            # None when no stroke encoder has been exported yet.
+            'strokes': embed_strokes(strokes),
         },
     })
 

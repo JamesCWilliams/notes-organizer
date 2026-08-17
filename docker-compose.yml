@@ -1,6 +1,9 @@
 services:
   ml-service:
-    build: ./ml-service
+    build:
+      # Repo root: the image needs training/stroke_encoder/prep.py too.
+      context: .
+      dockerfile: ml-service/Dockerfile
     ports:
       - "5000:5000"
     volumes:

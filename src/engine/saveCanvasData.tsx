@@ -27,6 +27,7 @@ export interface Analysis {
   embeddings: {
     text: EmbeddingRecord | null; // null when no text was recognized (pure doodle)
     image: EmbeddingRecord;
+    strokes: EmbeddingRecord | null; // null until a stroke encoder is exported
   };
 }
 

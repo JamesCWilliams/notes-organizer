@@ -1,0 +1,24 @@
+# The build context is the repo root (the image needs both ml-service/ and
+# training/stroke_encoder/prep.py), so everything else is excluded here to
+# keep the context small — training/data alone can be tens of GB.
+
+.git
+node_modules
+dist
+dist-ssr
+src-tauri/target
+saves
+
+# Python environments and caches
+**/.venv
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+
+# Datasets, checkpoints, and downloaded weights (models/ is volume-mounted)
+training/data
+training/checkpoints
+ml-service/models
+ml-service/debug
+ml-service/evaluation
+ml-service/tests

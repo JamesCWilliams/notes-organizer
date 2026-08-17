@@ -2,7 +2,15 @@
 
 This runs a small Flask server that takes a handwriting image plus the raw pen strokes and spits back transcribed text using a pretrained model from Microsoft (TrOCR). The strokes are used to split the canvas into rows of writing (`utils/rows.py`), then each row is cropped out of the image and transcribed separately with beam search, best candidate wins.
 
-It also produces embeddings for note similarity: the transcription is embedded with MiniLM (`embedding/text.py`) and the canvas image with SigLIP (`embedding/image.py`). SigLIP puts images and text in one shared space, so typed queries can later be matched against image vectors directly. All vectors are unit length, cosine similarity between two of them is just a dot product, and vectors are only comparable to others from the same model, which is why each one is stored with the model name that produced it.
+It also produces embeddings for note similarity, three of them per note:
+
+- **text**: the transcription, embedded with MiniLM (`embedding/text.py`).
+- **image**: the canvas, embedded with SigLIP (`embedding/image.py`). SigLIP puts images and text in one shared space, so typed queries can later be matched against image vectors directly.
+- **strokes**: the pen trajectory itself, embedded with our own encoder (`embedding/strokes.py`), trained in `../training`. This is the one that sees *how* the note was drawn: stroke order, shape, and dynamics that neither the transcription nor the flattened picture retains.
+
+All vectors are unit length, cosine similarity between two of them is just a dot product, and vectors are only comparable to others from the same model, which is why each one is stored with the model name that produced it.
+
+The stroke encoder is optional: if nothing has been exported to `models/stroke-encoder-*/` yet, that embedding comes back `null` and everything else still works.
 
 Everything runs on CPU: torch is deliberately pinned to the CPU-only wheels (the CUDA ones drag in ~3GB of libraries this service never uses).
 
@@ -39,13 +47,15 @@ Both take the same JSON body:
 {
   "text": "...",
   "embeddings": {
-    "text":  { "model": "all-MiniLM-L6-v2", "dim": 384, "vector": [...] },
-    "image": { "model": "google/siglip-base-patch16-224", "dim": 768, "vector": [...] }
+    "text":    { "model": "all-MiniLM-L6-v2", "dim": 384, "vector": [...] },
+    "image":   { "model": "google/siglip-base-patch16-224", "dim": 768, "vector": [...] },
+    "strokes": { "model": "stroke-encoder-v2", "dim": 192, "vector": [...] }
   }
 }
 ```
 
-`embeddings.text` is `null` when no text was recognized (a pure doodle).
+`embeddings.text` is `null` when no text was recognized (a pure doodle);
+`embeddings.strokes` is `null` when no stroke encoder has been exported.
 
 ## running with docker
 
@@ -120,7 +130,7 @@ inference/
 embedding/
   text.py            MiniLM text embeddings of transcriptions
   image.py           SigLIP image embeddings (+ text tower for cross-modal queries)
-  strokes.py         (empty for now) future stroke-sequence embeddings
+  strokes.py         our own stroke-trajectory encoder, trained in ../training
 utils/
   rows.py            stroke-based row segmentation and cropping
   image.py           decodes the base64 image from the request

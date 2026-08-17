@@ -1,0 +1,8 @@
+{
+  "model": "stroke-encoder-v2",
+  "dim": 192,
+  "prep_version": "v1",
+  "max_points": 256,
+  "trained_epoch": 94,
+  "val_loss": 0.8518955978480253
+}
