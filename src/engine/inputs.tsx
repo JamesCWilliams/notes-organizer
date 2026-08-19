@@ -1,7 +1,14 @@
 import { getStroke } from "perfect-freehand";
 import { getSvgPathFromStroke } from "./svgpathfromstroke";
 import { useRef, useState } from "react";
-import { saveCanvasData, loadCanvasData, writeCanvasFile, Analysis } from "./saveCanvasData";
+import {
+  saveCanvasData,
+  loadCanvasData,
+  writeCanvasFile,
+  readSavedNotes,
+  Analysis,
+} from "./saveCanvasData";
+import { rank, MODALITIES, Modality, ModalityRanking } from "./similarity";
 
 
 const ML_SERVICE_BASE = "http://localhost:5000";
@@ -41,21 +48,107 @@ async function svgElementToPngDataUrl(svg: SVGSVGElement): Promise<string> {
   });
 }
 // Renders the canvas SVG to a PNG and posts it with the strokes to the ML
-// service ("transcribe" or "analyze"). Returns the parsed response body;
-// throws if the service is unreachable or responds with an error status.
-async function postCanvas(
-  endpoint: "transcribe" | "analyze",
+// service for transcription and embedding. Shared by Save, which stores the
+// result in the file, and Analyze, which ranks the library against it. Throws if
+// the service is unreachable or responds with an error status.
+async function analyzeCanvas(
   svg: SVGSVGElement,
   strokes: number[][][],
-) {
+): Promise<Analysis> {
   const image = await svgElementToPngDataUrl(svg);
-  const res = await fetch(`${ML_SERVICE_BASE}/${endpoint}`, {
+  const res = await fetch(`${ML_SERVICE_BASE}/analyze`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ image, strokes }),
   });
   if (!res.ok) throw new Error(`ML service returned ${res.status}`);
-  return res.json();
+  const data = await res.json();
+  return {
+    analyzedAt: new Date().toISOString(),
+    text: data.text,
+    embeddings: data.embeddings,
+  };
+}
+
+// What one Analyze produces: the transcription, plus one ranking of the library
+// per modality.
+interface AnalyzeResult {
+  text: string;
+  corpusSize: number;
+  skipped: number; // notes in the folder with no embeddings to compare
+  rankings: Record<Modality, ModalityRanking | null>;
+}
+
+// Why a modality has no ranking at all. Distinct from having a ranking with no
+// comparable notes: here the canvas itself produced no vector.
+const NO_VECTOR: Record<Modality, string> = {
+  text: "no text recognized on the canvas",
+  image: "no image embedding returned",
+  strokes: "no stroke embedding (encoder unavailable)",
+};
+
+function RankingSection({
+  modality,
+  ranking,
+}: {
+  modality: Modality;
+  ranking: ModalityRanking | null;
+}) {
+  if (!ranking) {
+    return (
+      <div style={{ marginTop: 10 }}>
+        <strong>{modality}</strong>
+        <div style={{ color: "#888" }}>{NO_VECTOR[modality]}</div>
+      </div>
+    );
+  }
+
+  const list = (label: string, neighbors: typeof ranking.top) => (
+    <div>
+      <div style={{ color: "#666" }}>{label}</div>
+      {neighbors.map((n) => (
+        <div key={n.path} style={{ display: "flex", gap: 8 }}>
+          <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis" }}>
+            {n.name}
+          </span>
+          <span style={{ fontVariantNumeric: "tabular-nums" }}>
+            {n.score >= 0 ? "+" : ""}
+            {n.score.toFixed(3)}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+
+  return (
+    <div style={{ marginTop: 10 }}>
+      <strong>{modality}</strong>
+      <div style={{ color: "#888", fontSize: "0.85em" }}>
+        {ranking.model} · {ranking.comparable} comparable
+        {ranking.incomparable > 0 && `, ${ranking.incomparable} without a vector`}
+        {!ranking.centered && " · uncentered"}
+      </div>
+      {ranking.comparable === 0 ? (
+        <div style={{ color: "#888" }}>nothing to compare against</div>
+      ) : ranking.overlapping ? (
+        // Too few notes for "most" and "least" to be different lists, so show
+        // the one ranking rather than printing the same names twice. top and
+        // bottom together cover every comparable note in this case, but they
+        // run in opposite directions, so the merge has to be re-sorted.
+        list(
+          "most to least similar",
+          [...ranking.top, ...ranking.bottom]
+            .filter((n, i, all) => all.findIndex((m) => m.path === n.path) === i)
+            .sort((a, b) => b.score - a.score),
+        )
+      ) : (
+        <>
+          {list("most similar", ranking.top)}
+          {list("least similar", ranking.bottom)}
+        </>
+      )}
+    </div>
+  );
 }
 
 //This is where the engine will gather user inputs from mouse clicks/stylus.
@@ -63,8 +156,12 @@ export function Draw() {
   const [currentStroke, setCurrentStroke] = useState<number[][]>([]);
   const [completedStrokes, setCompletedStrokes] = useState<number[][][]>([]);
   ("TO DO: Include this data with the PNG image.");
-  const [transcription, setTranscription] = useState<string | null>(null);
+  const [result, setResult] = useState<AnalyzeResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
+  // Path of the note currently on the canvas, if it came from a file. Kept so
+  // Analyze can leave it out of its own results.
+  const [loadedPath, setLoadedPath] = useState<string | null>(null);
   const svgRef = useRef<SVGSVGElement>(null);
 
   function handlePointerDown(e: React.PointerEvent<SVGSVGElement>) {
@@ -86,13 +183,9 @@ export function Draw() {
     const path = await saveCanvasData(completedStrokes);
     if (!path || !svgRef.current) return;
     try {
-      const data = await postCanvas("analyze", svgRef.current, completedStrokes);
-      const analysis: Analysis = {
-        analyzedAt: new Date().toISOString(),
-        text: data.text,
-        embeddings: data.embeddings,
-      };
+      const analysis = await analyzeCanvas(svgRef.current, completedStrokes);
       await writeCanvasFile(path, completedStrokes, analysis);
+      setLoadedPath(path); // the canvas is now this file, so Analyze can skip it
     } catch {
       // ML service not available, file saved with analysis: null
     }
@@ -103,19 +196,43 @@ export function Draw() {
   }
 
   async function handleLoad() {
-    const strokes = await loadCanvasData();
-    if (strokes) setCompletedStrokes(strokes);
+    const loaded = await loadCanvasData();
+    if (!loaded) return;
+    setCompletedStrokes(loaded.strokes);
+    setLoadedPath(loaded.path);
+    setResult(null);
+    setError(null);
   }
 
+  function handleClear() {
+    setCompletedStrokes([]);
+    setLoadedPath(null);
+    setResult(null);
+    setError(null);
+  }
+
+  // Embeds the canvas, then ranks every saved note against it. The comparison
+  // happens here rather than in the ML service, which stays stateless and never
+  // learns the saves folder exists.
   async function handleAnalyze() {
     if (!svgRef.current) return;
     setAnalyzing(true);
-    setTranscription(null);
+    setResult(null);
+    setError(null);
     try {
-      const data = await postCanvas("transcribe", svgRef.current, completedStrokes);
-      setTranscription(data.text);
-    } catch (e) {
-      setTranscription("Error: could not reach ML service.");
+      const analysis = await analyzeCanvas(svgRef.current, completedStrokes);
+      const { notes, skipped } = await readSavedNotes();
+      // Drop the note already on the canvas: it matches itself almost perfectly
+      // and would crowd a real neighbour out of every top-3.
+      const corpus = notes.filter((note) => note.path !== loadedPath);
+      setResult({
+        text: analysis.text,
+        corpusSize: corpus.length,
+        skipped,
+        rankings: rank(analysis, corpus),
+      });
+    } catch {
+      setError("Could not reach ML service.");
     } finally {
       setAnalyzing(false);
     }
@@ -158,7 +275,7 @@ export function Draw() {
           {analyzing ? "Analyzing…" : "Analyze"}
         </button>
         <button
-          onClick={() => setCompletedStrokes([])}
+          onClick={handleClear}
           disabled={analyzing || completedStrokes.length === 0}
         >
           Clear
@@ -167,7 +284,7 @@ export function Draw() {
           Save
         </button>
         <button onClick={handleLoad}>Load</button>
-        {transcription !== null && (
+        {(error || result) && (
           <div
             style={{
               color: "black",
@@ -175,10 +292,42 @@ export function Draw() {
               border: "1px solid #ccc",
               borderRadius: 4,
               padding: "8px 12px",
-              maxWidth: 300,
+              width: 300,
+              maxHeight: "70vh",
+              overflowY: "auto",
+              textAlign: "left",
+              fontSize: 13,
             }}
           >
-            {transcription}
+            {error ? (
+              error
+            ) : (
+              <>
+                <div style={{ whiteSpace: "pre-wrap" }}>
+                  {result!.text.trim() || <em>no text recognized</em>}
+                </div>
+                <div
+                  style={{
+                    marginTop: 6,
+                    paddingTop: 6,
+                    borderTop: "1px solid #eee",
+                    color: "#888",
+                    fontSize: "0.85em",
+                  }}
+                >
+                  compared against {result!.corpusSize} saved note
+                  {result!.corpusSize === 1 ? "" : "s"}
+                  {result!.skipped > 0 && `, ${result!.skipped} skipped`}
+                </div>
+                {MODALITIES.map((modality) => (
+                  <RankingSection
+                    key={modality}
+                    modality={modality}
+                    ranking={result!.rankings[modality]}
+                  />
+                ))}
+              </>
+            )}
           </div>
         )}
       </div>

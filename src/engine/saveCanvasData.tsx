@@ -4,7 +4,7 @@
 // canvas, not just a flattened image.
 
 import { save, open } from "@tauri-apps/plugin-dialog";
-import { writeTextFile, readTextFile, mkdir } from "@tauri-apps/plugin-fs";
+import { writeTextFile, readTextFile, mkdir, readDir } from "@tauri-apps/plugin-fs";
 import { join } from "@tauri-apps/api/path";
 
 const FILE_EXTENSION = "canvasnote";
@@ -105,8 +105,13 @@ export async function saveCanvasData(
   return path;
 }
 
-// Returns the loaded strokes, or null if the user cancelled the dialog.
-export async function loadCanvasData(): Promise<number[][][] | null> {
+// Returns the loaded strokes and the file they came from, or null if the user
+// cancelled the dialog. The path matters to the caller: a note on the canvas
+// should not turn up as its own nearest neighbour.
+export async function loadCanvasData(): Promise<{
+  strokes: number[][][];
+  path: string;
+} | null> {
   const path = await open({
     multiple: false,
     defaultPath: await ensureSavesDir(),
@@ -116,5 +121,54 @@ export async function loadCanvasData(): Promise<number[][][] | null> {
 
   const raw = await readTextFile(path);
   const data: CanvasData = JSON.parse(raw);
-  return data.strokes;
+  return { strokes: data.strokes, path };
+}
+
+// A saved note with embeddings, ready to compare a canvas against. Strokes are
+// left out: comparison only needs the vectors, and loading every note's points
+// would be a lot of data to hold for nothing.
+export interface SavedNote {
+  name: string; // file name without extension, for display
+  path: string;
+  analysis: Analysis;
+}
+
+// Reads the saves folder into a comparable corpus. Notes are skipped rather
+// than treated as errors: v1 files predate analysis entirely, some v2 files
+// were written before embeddings existed, and a note saved while the ML service
+// was down has analysis: null. The count of skipped files comes back so the UI
+// can say how much of the folder it actually compared against, since "no
+// similar notes" and "nothing in the folder is comparable" look identical
+// otherwise.
+export async function readSavedNotes(): Promise<{
+  notes: SavedNote[];
+  skipped: number;
+}> {
+  const dir = await ensureSavesDir();
+  const suffix = `.${FILE_EXTENSION}`;
+  const notes: SavedNote[] = [];
+  let skipped = 0;
+
+  for (const entry of await readDir(dir)) {
+    if (!entry.isFile || !entry.name.endsWith(suffix)) continue;
+    const path = await join(dir, entry.name);
+    try {
+      const data: CanvasData = JSON.parse(await readTextFile(path));
+      // embeddings is typed as required, but files written by older versions of
+      // the app really do lack it, so this guard is not redundant.
+      if (!data.analysis?.embeddings) {
+        skipped++;
+        continue;
+      }
+      notes.push({
+        name: entry.name.slice(0, -suffix.length),
+        path,
+        analysis: data.analysis,
+      });
+    } catch {
+      skipped++; // unparseable or half-written, not worth failing the search
+    }
+  }
+
+  return { notes, skipped };
 }

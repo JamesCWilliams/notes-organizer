@@ -8,6 +8,7 @@ from PIL import Image
 from transformers import TrOCRProcessor, VisionEncoderDecoderModel
 from transformers.generation.utils import GenerateBeamEncoderDecoderOutput
 
+from inference.row_filter import looks_like_text
 from utils.rows import segment_rows
 
 MODEL_NAME = 'microsoft/trocr-base-handwritten'
@@ -65,6 +66,7 @@ def _save_debug_run(
     strokes: list[list[list[float]]],
     rows: list[Image.Image],
     row_candidates: list[list[dict]],
+    row_scores: list[float],
     text: str,
     seg_time: float,
     row_times: list[float]
@@ -84,8 +86,13 @@ def _save_debug_run(
     summary = {
         'per row': [
             {
-                'prediction': candidates[0]['text'],
-                'confidence': candidates[0]['confidence'],
+                'prediction': candidates[0]['text'] if candidates else None,
+                'confidence': candidates[0]['confidence'] if candidates else None,
+                # Below row_filter's threshold the row was read as a drawing and
+                # never transcribed; the score is kept so the threshold can be
+                # re-tuned against real runs.
+                'kept': bool(candidates),
+                'text score': round(row_scores[i], 4),
                 'transcription time': f'{row_times[i]:.6f} ms',
                 'candidates': candidates
             }
@@ -107,17 +114,29 @@ def transcribe(image: Image.Image, strokes: list[list[list[float]]], debug: bool
 
     row_times = []
     row_candidates = []
+    row_scores = []
     for row in rows:
         this_row_t0 = perf_counter_ns()
-        this_row_candidates = _run_trocr(row)
+        # Drawings are dropped before transcription, not after: TrOCR reads a
+        # doodle as confident nonsense, and skipping it also saves the ~700 ms
+        # it would spend doing so.
+        keep, score = looks_like_text(row)
+        this_row_candidates = _run_trocr(row) if keep else []
         this_row_t1 = perf_counter_ns()
         this_row_time = (this_row_t1 - this_row_t0) / 1e6
         row_times.append(this_row_time)
         row_candidates.append(this_row_candidates)
+        row_scores.append(score)
 
-    text = '\n'.join(candidates[0]['text'] for candidates in row_candidates)
+    # A rejected row contributes no line at all, so a page of pure drawing
+    # transcribes to '' and app.py stores no text embedding for it.
+    text = '\n'.join(
+        candidates[0]['text'] for candidates in row_candidates if candidates
+    )
 
     if debug:
-        _save_debug_run(image, strokes, rows, row_candidates, text, seg_time, row_times)
+        _save_debug_run(
+            image, strokes, rows, row_candidates, row_scores, text, seg_time, row_times
+        )
 
     return text
