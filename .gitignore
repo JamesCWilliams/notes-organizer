@@ -30,6 +30,8 @@ __pycache__/
 *.pyo
 .pytest_cache/
 ml-service/debug/
+.pytest_cache
+.ruff_cache
 
 
 # HuggingFace model cache

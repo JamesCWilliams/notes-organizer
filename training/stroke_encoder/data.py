@@ -13,8 +13,12 @@ overhead, measured at 3 KB for an 18-point QuickDraw doodle and 95 KB for a
 628-point IAM line, which puts a full corpus at ~6 GB, multiplied again by
 every DataLoader worker that forks and touches it. Packed, the same corpus is
 about 500 MB and forks cleanly.
+
+Packing and the length measurement it feeds are both deterministic functions of
+the files on disk, and both are slow, so both are cached under data/cache.
 """
 
+import hashlib
 import json
 import xml.etree.ElementTree as ET
 from collections.abc import Iterable, Iterator
@@ -27,11 +31,12 @@ from torch.utils.data import Dataset, Sampler
 from tqdm import tqdm
 
 from .augment import augment
-from .prep import prepare
+from .prep import prepare, prepared_length
 
 DATA_ROOT = Path(__file__).resolve().parents[1] / 'data'
 QUICKDRAW_DIR = DATA_ROOT / 'quickdraw'
 IAM_DIR = DATA_ROOT / 'iam_ondb'
+CACHE_DIR = DATA_ROOT / 'cache'
 
 _QUICKDRAW_URL = 'https://storage.googleapis.com/quickdraw_dataset/full/{form}/{category}.ndjson'
 _CATEGORY_LIST_URL = (
@@ -42,6 +47,16 @@ _CATEGORY_LIST_URL = (
 # Pressure for sources that don't record it (QuickDraw, IAM-OnDB). Matches
 # prep's default so packed and unpacked paths agree.
 _DEFAULT_PRESSURE = 0.5
+
+# Augmented draws measured per drawing when estimating batch lengths. Wants to
+# be more than 2: each drawing is realized as two views, so the length a batch
+# pads to is already a max over 2 draws, and estimating over the same number of
+# draws only matches it half the time. Measured mean fill of the token budget,
+# and the fraction of drawings surviving make_collate's trim: 0.79 and 72% at
+# 2 draws, 0.88 and 81% at 4. Past that it is diminishing, since a batch's
+# length is a max over thousands of drawings and some one of them will always
+# beat its estimate. Each draw costs a prep pass over the corpus, but is cached.
+_LENGTH_DRAWS = 4
 
 
 def all_categories() -> list[str]:
@@ -199,6 +214,28 @@ class StrokeStore:
             np.asarray(drawing_ends, dtype=np.int64),
         ), spans
 
+    def save(self, directory: Path) -> None:
+        """Writes the three arrays out so the next run can skip packing."""
+        directory.mkdir(parents=True, exist_ok=True)
+        np.save(directory / 'points.npy', self.points)
+        np.save(directory / 'stroke_ends.npy', self.stroke_ends)
+        np.save(directory / 'drawing_ends.npy', self.drawing_ends)
+
+    @classmethod
+    def load(cls, directory: Path) -> 'StrokeStore':
+        """Reads a saved store back, memory-mapping the bulk of it.
+
+        points is the big array and is only ever read, so mapping it keeps one
+        copy in the page cache for every DataLoader worker instead of one per
+        forked process. The two offset arrays are small and get read on every
+        __getitem__, so those are loaded properly.
+        """
+        return cls(
+            np.load(directory / 'points.npy', mmap_mode='r'),
+            np.load(directory / 'stroke_ends.npy'),
+            np.load(directory / 'drawing_ends.npy'),
+        )
+
     def __len__(self) -> int:
         return len(self.drawing_ends)
 
@@ -214,43 +251,136 @@ class StrokeStore:
     def nbytes(self) -> int:
         return self.points.nbytes + self.stroke_ends.nbytes + self.drawing_ends.nbytes
 
-    def point_counts(self) -> np.ndarray:
-        """Points per drawing, straight from the offsets, no parsing.
 
-        Augmentation only ever removes points, so this is an upper bound on
-        the sequence length a drawing will produce, which is what bucketing
-        needs.
-        """
-        stroke_starts = np.concatenate([[0], self.stroke_ends[:-1]])
-        per_stroke = self.stroke_ends - stroke_starts
-        ends = self.drawing_ends
-        cumulative = np.concatenate([[0], np.cumsum(per_stroke)])
-        return (cumulative[ends] - cumulative[np.concatenate([[0], ends[:-1]])]).astype(np.int64)
+def _hash(*parts: str) -> str:
+    digest = hashlib.sha256()
+    for part in parts:
+        digest.update(part.encode())
+    return digest.hexdigest()[:16]
+
+
+def _corpus_key(limit_per_category: int | None) -> str:
+    """Identifies the corpus by its source files, without reading them.
+
+    Name, size and mtime of every input file. Cheap enough to run on every
+    start, and it means downloading more QuickDraw categories or unpacking more
+    IAM invalidates the cache on its own rather than relying on anyone
+    remembering to clear it.
+    """
+    files = sorted(QUICKDRAW_DIR.glob('*.ndjson')) + sorted(IAM_DIR.rglob('*.xml'))
+    return _hash(repr(limit_per_category), *(
+        f'{path.name}:{path.stat().st_size}:{path.stat().st_mtime_ns}' for path in files
+    ))
+
+
+def load_or_build_store(limit_per_category: int | None = None):
+    """The packed corpus, from cache when the source files have not changed.
+
+    Packing parses ~500 MB of ndjson and XML for a result identical run to run.
+    Caching turns that into a memory-mapped read.
+    """
+    directory = CACHE_DIR / f'store-{_corpus_key(limit_per_category)}'
+    spans_path = directory / 'spans.json'
+    if spans_path.exists():
+        spans = {name: range(*bounds) for name, bounds in json.loads(spans_path.read_text()).items()}
+        print(f'loaded packed corpus from {directory}')
+        return StrokeStore.load(directory), spans
+
+    store, spans = StrokeStore.build({
+        'quickdraw': iter_quickdraw(limit_per_category),
+        'iam': iter_iam_ondb(),
+    })
+    store.save(directory)
+    spans_path.write_text(json.dumps({name: [s.start, s.stop] for name, s in spans.items()}))
+    return store, spans
+
+
+def cached_lengths(store: StrokeStore, limit_per_category: int | None = None) -> np.ndarray:
+    """Longest sequence each drawing is likely to produce once augmented.
+
+    Bucketing has to predict the length of the tensor that reaches the model,
+    and that is prepare(augment(drawing)), never the drawing as stored. The two
+    differ because the augmentations can lengthen the pen path, and prep
+    resamples at a constant spacing, so a longer path becomes more points.
+
+    Taking the worst of a few augmented draws beats predicting the inflation
+    analytically, which would need rederiving every time augment.py changed.
+    It is an estimate over samples rather than a bound, so make_collate still
+    enforces the budget once the true length is known.
+
+    Cached because this is the slowest thing between launching a run and the
+    first epoch. The key covers the corpus, prep and augment, so editing either
+    module recomputes rather than silently reusing stale lengths.
+    """
+    here = Path(__file__).parent
+    recipe = _hash(
+        str(_LENGTH_DRAWS),
+        # Hashed rather than keyed on PREP_VERSION, which is a human promise to
+        # bump a string. Stale lengths silently build over-budget batches, so
+        # this one should not depend on anybody remembering.
+        (here / 'prep.py').read_text(),
+        (here / 'augment.py').read_text(),
+    )
+    path = CACHE_DIR / f'store-{_corpus_key(limit_per_category)}' / f'lengths-{recipe}.npy'
+    if path.exists():
+        counts = np.load(path)
+        if len(counts) == len(store):
+            print(f'loaded prepared lengths from {path.name}')
+            return counts
+
+    rng = np.random.default_rng(0)
+    counts = np.empty(len(store), dtype=np.int64)
+    for i in tqdm(range(len(store)), desc=f'measuring lengths ({_LENGTH_DRAWS} draws)'):
+        counts[i] = max(prepared_length(augment(store[i], rng)) for _ in range(_LENGTH_DRAWS))
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    np.save(path, counts)
+    return counts
 
 
 class LengthBucketSampler(Sampler):
     """Yields batches of similar-length drawings, sized by a token budget.
 
     Padding is charged per batch at the longest member, so mixing a 39-point
-    doodle with a 256-point handwriting line makes everyone pay 256. Sorting
-    by length first means short batches can be enormous and only the genuinely
-    long batches are small, the GPU sees a roughly constant number of real
-    tokens either way.
+    doodle with a 256-point handwriting line makes everyone pay 256. Sorting by
+    length first cut padding from 42% to 7%, and lets short batches hold
+    thousands of drawings while only the genuinely long ones shrink.
 
-    The trade-off for contrastive training is that batch size, and so the
-    number of in-batch negatives, now varies. Batches also become
+    The trade-off for contrastive training is that the number of in-batch
+    negatives now varies with sequence length. Batches also become
     length-homogeneous, which removes sequence length as a trivial cue the
     model could otherwise use to tell samples apart.
+
+    max_drawings is not optional in practice: the budget bounds drawings x
+    length, leaving the count unbounded as lengths shrink, while NT-Xent builds
+    a (2N, 2N) matrix that grows with its square. Four drawings out of 342,600
+    reduce to 2 points, and a bucket of 2-point drawings takes budget/2 of
+    them, which put a 5 GB similarity matrix on the card before the backward
+    pass and set peak VRAM for the whole run.
     """
 
-    def __init__(self, lengths, token_budget: int, shuffle: bool = True, seed: int = 0):
+    def __init__(
+        self,
+        lengths,
+        token_budget: int,
+        max_drawings: int = 8192,
+        shuffle: bool = True,
+        seed: int = 0,
+    ):
         self.lengths = np.asarray(lengths)
         self.token_budget = token_budget
+        self.max_drawings = max_drawings
         self.shuffle = shuffle
         self.seed = seed
         self.epoch = 0
+        self._cache: tuple[int, list[np.ndarray]] | None = None
 
     def _batches(self) -> list[np.ndarray]:
+        # DataLoader asks for len() as well as iterating, and bucketing sorts
+        # the whole corpus, so memoize until the epoch actually advances.
+        if self._cache is not None and self._cache[0] == self.epoch:
+            return self._cache[1]
+
         rng = np.random.default_rng((self.seed, self.epoch))
         # Jitter the sort key so identical-length items don't clump into the
         # exact same batch every epoch.
@@ -260,7 +390,9 @@ class LengthBucketSampler(Sampler):
         batches, start, longest = [], 0, 0
         for position, index in enumerate(order):
             longest = max(longest, int(self.lengths[index]))
-            if longest * (position - start + 1) > self.token_budget and position > start:
+            count = position - start + 1
+            if (longest * count > self.token_budget or count > self.max_drawings) \
+                    and position > start:
                 batches.append(order[start:position])
                 start, longest = position, int(self.lengths[index])
         if start < len(order):
@@ -268,6 +400,7 @@ class LengthBucketSampler(Sampler):
 
         if self.shuffle:
             rng.shuffle(batches)
+        self._cache = (self.epoch, batches)
         return batches
 
     def __iter__(self):

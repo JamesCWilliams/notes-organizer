@@ -49,19 +49,48 @@ class StrokeEncoder(nn.Module):
         )
         self.norm = nn.LayerNorm(d_model)
 
+    def embed_points(self, x: torch.Tensor) -> torch.Tensor:
+        """Projects raw features to d_model and adds positions, before attention."""
+        return self.input_proj(x) + self.pos_emb[:, : x.size(1)]
+
+    def attention_mask(self, mask: torch.Tensor) -> torch.Tensor:
+        """The key-padding mask, with any all-padding row opened back up.
+
+        A row masked everywhere makes attention softmax a row of -inf, which is
+        NaN, and nothing downstream can undo it: NaN * 0 is still NaN. It does
+        not even stay in its own row, since the backward pass carries it into
+        the shared parameters and takes the whole run with it, silently.
+
+        Letting such a row attend to its own padding costs nothing. Those
+        positions hold zeros and pool() discards them on the true mask anyway,
+        so the drawing comes back as the zero vector. prepare() returns (0, 4)
+        for a drawing with no usable points, which is what produces one.
+        """
+        return mask & ~mask.all(dim=1, keepdim=True)
+
+    def pool(self, h: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+        """Norm, masked mean pool and L2, turning (B, T, d) into (B, d).
+
+        Takes the true mask, not the one attention ran under.
+        """
+        h = self.norm(h)
+        keep = (~mask).unsqueeze(-1).to(h.dtype)
+        pooled = (h * keep).sum(dim=1) / keep.sum(dim=1).clamp(min=1.0)
+        return F.normalize(pooled, dim=-1)
+
     def forward(self, x: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
         """x: (B, T, 4) features. mask: (B, T) bool, True where padding.
 
         Returns (B, d_model) unit-length embeddings.
-        """
-        h = self.input_proj(x) + self.pos_emb[:, : x.size(1)]
-        h = self.encoder(h, src_key_padding_mask=mask)
-        h = self.norm(h)
 
-        # Masked mean pool; clamp guards an all-padding row from dividing by 0.
-        keep = (~mask).unsqueeze(-1).to(h.dtype)
-        pooled = (h * keep).sum(dim=1) / keep.sum(dim=1).clamp(min=1.0)
-        return F.normalize(pooled, dim=-1)
+        Split into methods so training can reuse the halves around a
+        checkpointed layer stack (see train_contrastive.encode) without
+        restating them. All of it stays scriptable: this is the forward
+        export.py ships and the service runs.
+        """
+        h = self.embed_points(x)
+        h = self.encoder(h, src_key_padding_mask=self.attention_mask(mask))
+        return self.pool(h, mask)
 
 
 class ProjectionHead(nn.Module):

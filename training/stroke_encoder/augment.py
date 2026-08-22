@@ -80,11 +80,36 @@ def _resample(strokes: list[np.ndarray], rng, p: float = 0.5):
     return out
 
 
-def _jitter_points(strokes: list[np.ndarray], rng, sigma_frac: float = 0.004):
-    """Adds positional noise scaled to the drawing's own size."""
+def _jitter_points(
+    strokes: list[np.ndarray], rng, sigma_frac: float = 0.004, step_frac: float = 0.1
+):
+    """Adds positional noise scaled to the drawing's size, capped by its density.
+
+    The cap is what keeps this from inflating path length. Noise applied
+    independently per point stretches each segment by about
+    sqrt(1 + 4 (sigma/step)^2), which is nothing for QuickDraw's sparse
+    polylines, where points sit ~40x sigma apart, but compounds badly for
+    IAM-OnDB's ~614-point lines, where they sit closer together than sigma
+    itself.
+
+    Uncapped that inflated IAM's prepared length 1.81x, since prep resamples at
+    a constant spacing and duly turned the extra wobble into 1.81x the points.
+    Two things wrong with that: it made batch lengths unpredictable, and it made
+    the augmentation ~10x stronger for handwriting than for doodles, which is
+    the sample-rate dependence prep.py exists to remove, reintroduced one stage
+    earlier.
+
+    Capping at a fraction of the mean step holds the stretch under ~2% for any
+    recording density, and leaves the sparse case exactly as it was.
+    """
     xy = np.vstack([s[:, :2] for s in strokes])
     span = float(max(xy.max(axis=0) - xy.min(axis=0)))
+
+    steps = [np.linalg.norm(np.diff(s[:, :2], axis=0), axis=1) for s in strokes if len(s) > 1]
     sigma = max(span, 1e-6) * sigma_frac
+    if steps:
+        mean_step = float(np.concatenate(steps).mean())
+        sigma = min(sigma, mean_step * step_frac)
 
     out = []
     for stroke in strokes:
